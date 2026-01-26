@@ -46,8 +46,8 @@ from .SKPutil import *
 bl_info = {
     "name": "SketchUp Importer",
     "author": "Martijn Berger, Sanjay Mehta, Arindam Mondal, Peter Kirkham",
-    "version": (0, 25, 0),
-    "blender": (4, 4, 0),
+    "version": (0, 27, 0),
+    "blender": (3, 2, 0),
     "description": "Import of native SketchUp (.skp) files",
     "wiki_url": "https://github.com/martijnberger/pyslapi",
     "doc_url": "https://github.com/arindam-m/pyslapi/wiki",
@@ -306,7 +306,7 @@ class SceneImporter:
         # hide_one_level()
 
         # release model and terminate api
-        self.skp_model.close()
+        # self.skp_model.close()
 
         return {"FINISHED"}
 
@@ -352,7 +352,7 @@ class SceneImporter:
         entities,
         name,
         transform,
-        default_material="Material",
+        default_material="DefaultMaterial",
         etype=EntityType.none,
         component_stats=None,
         component_skip=None,
@@ -380,6 +380,8 @@ class SceneImporter:
                 continue
             mat = inherent_default_mat(instance.material, default_material)
             cdef = self.skp_components[instance.definition.name]
+            if cdef is None:
+                continue
             if (cdef.name, mat) in component_skip:
                 continue
             if DEBUG:
@@ -403,14 +405,26 @@ class SceneImporter:
             self.context.scene.render.engine = "CYCLES"
         self.materials = {}
         self.materials_scales = {}
-        if self.reuse_material and "Material" in bpy.data.materials:
-            self.materials["Material"] = bpy.data.materials["Material"]
+        if self.reuse_material and "DefaultMaterial" in bpy.data.materials:
+            self.materials["DefaultMaterial"] = bpy.data.materials["DefaultMaterial"]
         else:
-            bmat = bpy.data.materials.new("Material")
+            bmat = bpy.data.materials.new("DefaultMaterial")
             bmat.diffuse_color = (0.8, 0.8, 0.8, 0)
             # if self.render_engine == 'CYCLES':
-            bmat.use_nodes = True
-            self.materials["Material"] = bmat
+            # this modthed will remove 6.0.0
+            if bpy.app.version < (6, 0, 0):
+                bmat.use_nodes = True
+
+            nodes = bmat.node_tree.nodes
+            links = bmat.node_tree.links
+            nodes.clear()
+            output_shader = nodes.new("ShaderNodeOutputMaterial")
+            output_shader.location = (0, 0)
+            principled_bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+            principled_bsdf.location = (-300, 0)
+            links.new(principled_bsdf.outputs[0], output_shader.inputs["Surface"])
+            
+            self.materials["DefaultMaterial"] = bmat
         for mat in materials:
             name = mat.name
             if mat.texture:
@@ -430,8 +444,20 @@ class SceneImporter:
 
                 if round((a / 255.0), 2) < 1:
                     bmat.blend_method = "BLEND"
-                bmat.use_nodes = True
-                default_shader = bmat.node_tree.nodes["Principled BSDF"]
+                    
+                if bpy.app.version < (6, 0, 0):
+                    bmat.use_nodes = True
+
+                nodes = bmat.node_tree.nodes
+                links = bmat.node_tree.links
+                nodes.clear()
+                output_shader = nodes.new("ShaderNodeOutputMaterial")
+                output_shader.location = (0, 0)
+                principled_bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+                principled_bsdf.location = (-300, 0)
+                links.new(principled_bsdf.outputs[0], output_shader.inputs["Surface"])
+
+                default_shader = nodes["Principled BSDF"]
                 default_shader_base_color = default_shader.inputs["Base Color"]
                 default_shader_base_color.default_value = bmat.diffuse_color
                 default_shader_alpha = default_shader.inputs["Alpha"]
@@ -452,11 +478,12 @@ class SceneImporter:
                     shutil.rmtree(temp_dir)
                     # if self.render_engine == 'CYCLES':
                     #    bmat.use_nodes = True
-                    tex_node = bmat.node_tree.nodes.new("ShaderNodeTexImage")
+                    tex_node = nodes.new("ShaderNodeTexImage")
                     tex_node.image = img
-                    tex_node.location = Vector((-750, 225))
-                    bmat.node_tree.links.new(tex_node.outputs["Color"], default_shader_base_color)
-                    bmat.node_tree.links.new(tex_node.outputs["Alpha"], default_shader_alpha)
+                    tex_node.location = Vector((-600, 0))
+                    links.new(tex_node.outputs["Color"], default_shader_base_color)
+                    if img.file_format in ("PNG", "TARGA"):
+                        links.new(tex_node.outputs["Alpha"], default_shader_alpha)
                 # else:
                 #    btex = bpy.data.textures.new(tex_name, 'IMAGE')
                 #    btex.image = img
@@ -468,7 +495,7 @@ class SceneImporter:
             if not MIN_LOGS:
                 print(f"     {name}")
 
-    def write_mesh_data(self, entities=None, name="", default_material="Material"):
+    def write_mesh_data(self, entities=None, name="", default_material="DefaultMaterial"):
         mesh_key = (name, default_material)
         if mesh_key in self.component_meshes:
             return self.component_meshes[mesh_key]
@@ -487,7 +514,7 @@ class SceneImporter:
                 mat_number = mats[f.material.name]
             else:
                 mat_number = mats[default_material]
-                if default_material != "Material":
+                if default_material != "DefaultMaterial":
                     try:
                         f.st_scale = self.materials_scales[default_material]
                     except KeyError as _e:
@@ -557,7 +584,7 @@ class SceneImporter:
                 try:
                     bmat = self.materials[k]
                 except KeyError as _e:
-                    bmat = self.materials["Material"]
+                    bmat = self.materials["DefaultMaterial"]
                 me.materials.append(bmat)
                 # if bmat.alpha < 1.0:
                 #     alpha = True
@@ -627,7 +654,7 @@ class SceneImporter:
         entities,
         name,
         parent_transform,
-        default_material="Material",
+        default_material="DefaultMaterial",
         etype=None,
         parent_name=None,
         parent_location=Vector((0, 0, 0)),
@@ -717,6 +744,8 @@ class SceneImporter:
                 continue
             mat_name = inherent_default_mat(instance.material, default_material)
             cdef = self.skp_components[instance.definition.name]
+            if cdef is None:
+                continue
             if instance.name == "":
                 cname = "C-" + cdef.name
             else:
@@ -750,7 +779,7 @@ class SceneImporter:
             return ob
 
     def component_def_as_group(
-        self, entities, name, parent_transform, default_material="Material", etype=None, group=None
+        self, entities, name, parent_transform, default_material="DefaultMaterial", etype=None, group=None
     ):
         if etype == EntityType.outer:
             if (name, default_material) in self.component_skip:
@@ -798,6 +827,8 @@ class SceneImporter:
             if self.layers_skip and instance.layer in self.layers_skip:
                 continue
             cdef = self.skp_components[instance.definition.name]
+            if cdef is None:
+                continue
             self.component_def_as_group(
                 cdef.entities,
                 cdef.name,

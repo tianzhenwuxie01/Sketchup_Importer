@@ -3,14 +3,13 @@
 from collections import OrderedDict, defaultdict
 from enum import Enum
 
-default_material_name = "Material"
+default_material_name = "DefaultMaterial"
 su_group_num = 0
 
 
 class proxy_dict(dict):
     """
-    Class that emulates a dictionary
-    and returns the real definition value
+    Class that emulates a dictionary and returns the real definition value
     even when asking for a _proxy one
     """
 
@@ -23,9 +22,10 @@ class proxy_dict(dict):
                 return dict.__getitem__(self, key[:-6])
             except KeyError as _e:
                 return dict.__getitem__(self, key)
-
-        return dict.__getitem__(self, key)
-
+        try:
+            return dict.__getitem__(self, key)
+        except KeyError as _e:
+            print(f"SU | KeyError: {key}, Skipping...")
 
 class keep_offset(defaultdict):
     def __init__(self):
